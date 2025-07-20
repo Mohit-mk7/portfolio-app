@@ -20,7 +20,7 @@ function App() {
 
   const fetchUsers = () => {
     setLoading(true);
-    fetch('http://localhost:8080/api/users')
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/users`)
       .then(res => res.json())
       .then(data => {
         setUsers(data);
@@ -33,7 +33,7 @@ function App() {
   };
 
   const handleAddUser = () => {
-    fetch('http://localhost:8080/api/users', {
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newUser),
