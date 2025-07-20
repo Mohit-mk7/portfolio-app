@@ -92,8 +92,6 @@ resource "aws_ec2_tag" "public_subnet_2" {
   value       = "1"
 }
 
-
-
 data "aws_iam_openid_connect_provider" "oidc" {
   url = aws_eks_cluster.this.identity[0].oidc[0].issuer
 
