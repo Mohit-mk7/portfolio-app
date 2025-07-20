@@ -29,54 +29,25 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.REGION }}
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Init
-      working-directory: ${{ env.TF_DIR }}
-      run: terraform init -input=false -reconfigure
-
-    - name: Terraform Apply
-      working-directory: ${{ env.TF_DIR }}
-      run: terraform apply -auto-approve
-
-    - name: Get Terraform Outputs
-      id: tfout
-      working-directory: ${{ env.TF_DIR }}
+    - name: Install awscli, eksctl, kubectl, helm
       run: |
-        echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
-        echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
-        echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
+        # Install AWS CLI v2
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
 
-    - name: Tag Subnets for Load Balancer
-      run: |
-        aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
-        aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
-
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
-
-
-    - name: Install awscli
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y awscli
-
-    - name: Install eksctl
-      run: |
+        # Install eksctl
         curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
         sudo mv /tmp/eksctl /usr/local/bin
 
-    - name: Install kubectl
-      run: |
+        # Install kubectl
         curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin
 
-    - name: Install Helm
-      run: |
-        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        # Install Helm
+        curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
 
     - name: Check Docker Version (preinstalled)
       run: docker --version
