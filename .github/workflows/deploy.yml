@@ -45,7 +45,13 @@ jobs:
       working-directory: ${{ env.TF_DIR }}
       run: |
         echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
+        echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
+        echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
 
+    - name: Tag Subnets for Load Balancer
+      run: |
+        aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
+        aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
 
     - name: Update kubeconfig
       run: |
