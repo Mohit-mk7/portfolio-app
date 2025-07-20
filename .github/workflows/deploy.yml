@@ -4,7 +4,7 @@ name: Deploy Fullstack App to EKS
 on:
   push:
     branches:
-      - dev
+      - main
 
 env:
   TF_DIR: terraform-eks
