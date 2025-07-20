@@ -30,28 +30,21 @@ jobs:
         aws-region: ${{ env.REGION }}
 
 
+
+
     - name: Install eksctl, kubectl, and helm
       run: |
-
+       
         curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
         sudo mv /tmp/eksctl /usr/local/bin
 
- 
+       
         curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin
 
-
+       
         curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
-
-
-  
-
-
-
-
-
-
 
 
 
@@ -59,6 +52,11 @@ jobs:
         
     - name: Check Docker Version (preinstalled)
       run: docker --version
+
+
+    - name: Authenticate Docker to ECR
+      run: |
+        aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
 
     - name: Associate IAM OIDC
@@ -92,9 +90,6 @@ jobs:
           --set region=$REGION \
           --set vpcId=${{ env.vpc_id }} || true
 
-    - name: Authenticate Docker to ECR
-      run: |
-        aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
     - name: Build and Push Backend Image
       working-directory: ${{ env.APP_DIR }}/backend
