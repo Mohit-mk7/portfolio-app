@@ -93,7 +93,6 @@ resource "aws_ec2_tag" "public_subnet_2" {
 }
 
 
-
 data "aws_eks_cluster" "cluster" {
   name = var.cluster_name
 }
