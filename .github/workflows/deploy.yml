@@ -30,8 +30,16 @@ jobs:
 
     - name: Terraform Init
       working-directory: ${{ env.TF_DIR }}
-      run: terraform init -reconfigure
+      run: terraform init -input=false -reconfigure
 
+    - name: Terraform Import existing resources
+      working-directory: ${{ env.TF_DIR }}
+      run: |
+        terraform import aws_iam_role.eks_cluster my-eks-cluster-eks-role || true
+        terraform import aws_iam_role.eks_nodes my-eks-cluster-node-role || true
+        terraform import aws_iam_policy.lb_controller AWSLoadBalancerControllerIAMPolicy || true
+        terraform import aws_ecr_repository.this myapplication || true
+      
     - name: Terraform Apply to create EKS cluster only
       working-directory: ${{ env.TF_DIR }}
       run: terraform apply -auto-approve -target=module.eks
