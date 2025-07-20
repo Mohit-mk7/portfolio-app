@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: 654654194720.dkr.ecr.us-east-1.amazonaws.com/myapplication:frontend3.0
+          image: backend_placeholder
           ports:
             - containerPort: 80
           env:
