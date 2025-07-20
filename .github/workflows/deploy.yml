@@ -57,6 +57,31 @@ jobs:
       run: |
         aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
 
+
+    - name: Install awscli
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y awscli
+
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+
+    - name: Install kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin
+
+    - name: Install Helm
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    - name: Check Docker Version (preinstalled)
+      run: docker --version
+
+
     - name: Associate IAM OIDC
       run: |
         eksctl utils associate-iam-oidc-provider --region $REGION --cluster $CLUSTER_NAME --approve
