@@ -28,6 +28,37 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.REGION }}
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+  
+      - name: Terraform Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -reconfigure
+  
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve
+  
+      - name: Get Terraform Outputs
+        id: tfout
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
+          echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
+          echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
+  
+      - name: Tag Subnets for Load Balancer
+        run: |
+          aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
+          aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
+  
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+
+
+
+
       - name: Install eksctl, kubectl, and helm
         run: |
 
