@@ -7,12 +7,10 @@ variable "region" {
   type        = string
 }
 
-
 variable "ecr_name" {
   description = "Name of the ECR repository to create"
   type        = string
 }
-
 
 variable "cluster_name" {
   description = "EKS Cluster Name"
