@@ -93,18 +93,12 @@ resource "aws_ec2_tag" "public_subnet_2" {
 }
 
 
-data "aws_eks_cluster" "cluster" {
-  name = var.cluster_name
-}
-
-data "aws_eks_cluster_auth" "cluster" {
-  name = var.cluster_name
-}
 
 data "aws_iam_openid_connect_provider" "oidc" {
-  url = data.aws_eks_cluster.cluster.identity[0].oidc[0].issuer
+  url = aws_eks_cluster.this.identity[0].oidc[0].issuer
 
-  depends_on = [data.aws_eks_cluster.cluster]
+  depends_on = [aws_eks_cluster.this]
+
 }
 
 
@@ -127,12 +121,13 @@ resource "aws_iam_role" "lb_controller_sa" {
       Action = "sts:AssumeRoleWithWebIdentity",
       Condition = {
         StringEquals = {
-          "${replace(data.aws_eks_cluster.cluster.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+          "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
         }
       }
     }]
   })
 }
+
 
 resource "aws_iam_role_policy_attachment" "lb_controller_attach" {
   role       = aws_iam_role.lb_controller_sa.name
