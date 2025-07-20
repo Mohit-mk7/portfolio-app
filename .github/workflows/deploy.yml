@@ -1,4 +1,3 @@
-
 name: Deploy Fullstack App to EKS
 
 on:
@@ -9,7 +8,6 @@ on:
 env:
   TF_DIR: terraform-eks
   APP_DIR: application
-  REPO_NAME: ${{ secrets.ECR_REPO_NAME }}
   REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
@@ -44,6 +42,7 @@ jobs:
       run: |
         echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_ENV
         echo "ecr_uri=$(terraform output -raw ecr_repo_url)" >> $GITHUB_ENV
+        echo "eks_cluster_name=$(terraform output -raw eks_cluster_name)" >> $GITHUB_ENV
 
     - name: Authenticate Docker to ECR
       run: |
@@ -64,7 +63,7 @@ jobs:
 
     - name: Update kubeconfig
       run: |
-        aws eks update-kubeconfig --region $REGION --name ${{ secrets.CLUSTER_NAME }}
+        aws eks update-kubeconfig --region $REGION --name ${{ env.eks_cluster_name }}
 
     - name: Deploy to Kubernetes
       run: |
