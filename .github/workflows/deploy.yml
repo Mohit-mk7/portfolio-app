@@ -157,8 +157,14 @@ jobs:
 
       - name: Replace image lines in deployment files
         run: |
-          sed -i'' "s|image:.*backend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf$BUILD_NUMBER|" $APP_DIR/k8s/backend-deployment.yaml
-          sed -i'' "s|image:.*frontend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf$BUILD_NUMBER|" $APP_DIR/k8s/frontend-deployment.yaml
+          echo "Updating backend image"
+          sed -i'' -E "s|image:.*$REPO_NAME:backendf[0-9]+|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf$BUILD_NUMBER|" $APP_DIR/k8s/backend-deployment.yaml
+      
+          echo "Updating frontend image"
+          sed -i'' -E "s|image:.*$REPO_NAME:frontendf[0-9]+|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf$BUILD_NUMBER|" $APP_DIR/k8s/frontend-deployment.yaml
+      
+          echo "After update:"
+          grep "image:" $APP_DIR/k8s/*.yaml
 
 
       ### 4. Deploy to Kubernetes
