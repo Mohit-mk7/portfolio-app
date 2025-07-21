@@ -13,6 +13,7 @@ env:
   CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
   REPO_NAME: ${{ secrets.ECR_REPO_NAME }}
   VPC_ID: ${{ secrets.VPC_ID }}
+  BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
   deploy:
@@ -30,15 +31,25 @@ jobs:
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
-  
-      - name: Terraform Init
+
+      ### 1. Bucket Infra Setup (S3 backend)
+      - name: Terraform Init - Bucket Infra
+        working-directory: bucket
+        run: terraform init -input=false
+
+      - name: Terraform Apply - Bucket Infra
+        working-directory: bucket
+        run: terraform apply -auto-approve
+
+      ### 2. EKS Infra Setup
+      - name: Terraform Init - EKS Infra
         working-directory: ${{ env.TF_DIR }}
         run: terraform init -input=false -reconfigure
-  
-      - name: Terraform Apply
+
+      - name: Terraform Apply - EKS Infra
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -auto-approve
-  
+
       - name: Get Terraform Outputs
         id: tfout
         working-directory: ${{ env.TF_DIR }}
@@ -46,34 +57,27 @@ jobs:
           echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
           echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
           echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
-  
+
       - name: Tag Subnets for Load Balancer
         run: |
           aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
           aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
-  
+
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
 
-
-
-
       - name: Install eksctl, kubectl, and helm
         run: |
-
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client
-
           curl --silent --location "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
           sudo mv /tmp/eksctl /usr/local/bin
           eksctl version
 
-          
-      - name: Check Docker Version (preinstalled)
+      - name: Check Docker Version
         run: docker --version
 
       - name: Authenticate Docker to ECR
@@ -82,7 +86,7 @@ jobs:
 
       - name: Associate IAM OIDC
         run: |
-          eksctl utils associate-iam-oidc-provider --region $REGION --cluster $CLUSTER_NAME --approve
+          eksctl utils associate-iam-oidc-provider --region $REGION --cluster $CLUSTER_NAME --approve || true
 
       - name: Create IAM Policy for LB Controller
         run: |
@@ -96,13 +100,13 @@ jobs:
             --namespace kube-system \
             --name aws-load-balancer-controller \
             --attach-policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
-            --approve || true
+            --approve --override-existing-serviceaccounts || true
 
       - name: Install Helm Chart for LB Controller
         run: |
           helm repo add eks https://aws.github.io/eks-charts
           helm repo update
-          helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
             -n kube-system \
             --set clusterName=$CLUSTER_NAME \
             --set serviceAccount.create=false \
@@ -110,32 +114,36 @@ jobs:
             --set region=$REGION \
             --set vpcId=$VPC_ID || true
 
+      ### 3. Build and Push Docker Images with Build Number Tag
       - name: Build and Push Backend Image
         working-directory: ${{ env.APP_DIR }}/backend
         run: |
-          docker build -t backendf1 .
-          docker tag backendf1:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf1
-          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf1
+          docker build -t backendf${BUILD_NUMBER} .
+          docker tag backendf${BUILD_NUMBER}:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}
 
       - name: Build and Push Frontend Image
         working-directory: ${{ env.APP_DIR }}/frontend
         run: |
           REACT_APP_BACKEND_URL=/api npm install
           REACT_APP_BACKEND_URL=/api npm run build
-          docker build -t frontendf1 .
-          docker tag frontendf1:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf1
-          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf1
+          docker build -t frontendf${BUILD_NUMBER} .
+          docker tag frontendf${BUILD_NUMBER}:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
 
       - name: Replace image lines in deployment files
         run: |
-          sed -i "s|image:.*backend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf1|" $APP_DIR/k8s/backend-deployment.yaml
-          sed -i "s|image:.*frontend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf1|" $APP_DIR/k8s/frontend-deployment.yaml
+          sed -i "s|image:.*backend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}|" $APP_DIR/k8s/backend-deployment.yaml
+          sed -i "s|image:.*frontend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}|" $APP_DIR/k8s/frontend-deployment.yaml
 
+      ### 4. Deploy to Kubernetes
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -f $APP_DIR/k8s/backend-deployment.yaml
           kubectl apply -f $APP_DIR/k8s/frontend-deployment.yaml
           kubectl apply -f $APP_DIR/k8s/ingress.yaml
 
-      - name: Get Ingress
-        run: kubectl get ingress
+      - name: Get Ingress DNS
+        run: |
+          echo "Ingress DNS:"
+          kubectl get ingress portfolio-ingress -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
