@@ -154,10 +154,12 @@ jobs:
           docker tag frontendf${BUILD_NUMBER}:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
           docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
 
+
       - name: Replace image lines in deployment files
         run: |
-          sed -i "s|image:.*backend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}|" $APP_DIR/k8s/backend-deployment.yaml
-          sed -i "s|image:.*frontend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}|" $APP_DIR/k8s/frontend-deployment.yaml
+          sed -i'' "s|image:.*backend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf$BUILD_NUMBER|" $APP_DIR/k8s/backend-deployment.yaml
+          sed -i'' "s|image:.*frontend.*|image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf$BUILD_NUMBER|" $APP_DIR/k8s/frontend-deployment.yaml
+
 
       ### 4. Deploy to Kubernetes
       - name: Deploy to Kubernetes
