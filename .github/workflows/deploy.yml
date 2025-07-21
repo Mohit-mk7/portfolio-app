@@ -166,7 +166,15 @@ jobs:
           kubectl apply -f $APP_DIR/k8s/frontend-deployment.yaml
           kubectl apply -f $APP_DIR/k8s/ingress.yaml
 
-      - name: Get Ingress DNS
+      - name: Get Ingress DNS (with wait)
         run: |
-          echo "Ingress DNS:"
-          kubectl get ingress portfolio-ingress -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+          echo "Waiting for Ingress DNS..."
+          for i in {1..10}; do
+            DNS=$(kubectl get ingress portfolio-ingress -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || true)
+            if [ ! -z "$DNS" ]; then
+              echo "Ingress DNS: http://$DNS"
+              break
+            fi
+            echo "Still waiting... ($i)"
+            sleep 10
+          done
