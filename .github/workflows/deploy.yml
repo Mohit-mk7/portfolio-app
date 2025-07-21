@@ -141,18 +141,25 @@ jobs:
       - name: Build and Push Backend Image
         working-directory: ${{ env.APP_DIR }}/backend
         run: |
-          docker build -t backendf${BUILD_NUMBER} .
-          docker tag backendf${BUILD_NUMBER}:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}
-          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backendf${BUILD_NUMBER}
+          docker build -t backend:${BUILD_NUMBER} .
+          docker tag backend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
+          
+          echo "BACKEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}" >> $GITHUB_ENV
+
+
+
 
       - name: Build and Push Frontend Image
         working-directory: ${{ env.APP_DIR }}/frontend
         run: |
           REACT_APP_BACKEND_URL=/api npm install
           REACT_APP_BACKEND_URL=/api npm run build
-          docker build -t frontendf${BUILD_NUMBER} .
-          docker tag frontendf${BUILD_NUMBER}:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
-          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontendf${BUILD_NUMBER}
+          docker build -t frontend:${BUILD_NUMBER} .
+          docker tag frontend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
+          
+          echo "FRONTEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}" >> $GITHUB_ENV
 
 
       - name: Replace image lines in deployment files
