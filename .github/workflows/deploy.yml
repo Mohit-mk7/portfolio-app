@@ -9,77 +9,195 @@ env:
   TF_DIR: terraform-eks
   APP_DIR: application
   REGION: ${{ secrets.AWS_REGION }}
+  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
+  REPO_NAME: ${{ secrets.ECR_REPO_NAME }}
+  BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Init
-      working-directory: ${{ env.TF_DIR }}
-      run: terraform init -input=false -reconfigure
 
-    - name: Terraform Import existing resources
-      working-directory: ${{ env.TF_DIR }}
-      run: |
-        terraform import aws_iam_role.eks_cluster my-eks-cluster-eks-role || true
-        terraform import aws_iam_role.eks_nodes my-eks-cluster-node-role || true
-        terraform import aws_iam_policy.lb_controller AWSLoadBalancerControllerIAMPolicy || true
-        terraform import aws_ecr_repository.this myapplication || true
+      ### 1. Bucket Infra Setup (Only if not exists)
+      - name: Check if S3 Bucket Exists
+        id: check_bucket
+        run: |
+          if aws s3api head-bucket --bucket ${{ secrets.TF_BUCKET_NAME }} 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       
-    - name: Terraform Apply to create EKS cluster only
-      working-directory: ${{ env.TF_DIR }}
-      run: terraform apply -auto-approve -target=module.eks
+      - name: Terraform Init - Bucket
+        if: steps.check_bucket.outputs.exists == 'false'
+        working-directory: bucket
+        run: terraform init -input=false
+      
+      - name: Terraform Apply - Bucket
+        if: steps.check_bucket.outputs.exists == 'false'
+        working-directory: bucket
+        env:
+          TF_VAR_bucket_name: ${{ secrets.TF_BUCKET_NAME }}
+          TF_VAR_region: ${{ env.REGION }}
+        run: terraform apply -auto-approve
 
-    - name: Terraform Apply to create rest
-      working-directory: ${{ env.TF_DIR }}
-      run: terraform apply -auto-approve
 
 
-    - name: Extract Terraform Outputs
-      id: tfout
-      working-directory: ${{ env.TF_DIR }}
-      run: |
-        echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_ENV
-        echo "ecr_uri=$(terraform output -raw ecr_repo_url)" >> $GITHUB_ENV
-        echo "eks_cluster_name=$(terraform output -raw eks_cluster_name)" >> $GITHUB_ENV
+      ### 2. EKS Infra Setup
+      - name: Terraform Init - EKS
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_BUCKET_NAME }}" \
+            -backend-config="key=portfolio-app/terraform.tfstate" \
+            -backend-config="region=${{ env.REGION }}"
 
-    - name: Authenticate Docker to ECR
-      run: |
-        aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin ${{ env.ecr_uri }}
+      - name: Terraform Apply - EKS
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          TF_VAR_region: ${{ env.REGION }}
+          TF_VAR_cluster_name: ${{ env.CLUSTER_NAME }}
+          TF_VAR_ecr_name: ${{ env.REPO_NAME }}
+          TF_VAR_jump_ssh_cidr: "0.0.0.0/0"
+        run: terraform apply -auto-approve
 
-    - name: Build React App with Dynamic Backend URL
-      working-directory: ${{ env.APP_DIR }}/frontend
-      run: |
-        REACT_APP_BACKEND_URL=http://${{ env.alb_dns }}/api npm install
-        REACT_APP_BACKEND_URL=http://${{ env.alb_dns }}/api npm run build
+      ### 3. Your app logic continues here...
+      # (you already have steps for tagging subnets, installing Helm, building images, etc.)
 
-    - name: Build and Push Docker Image to ECR
-      working-directory: ${{ env.APP_DIR }}/frontend
-      run: |
-        docker build -t frontend:v3.0 .
-        docker tag frontend:v3.0 ${{ env.ecr_uri }}:frontend3.0
-        docker push ${{ env.ecr_uri }}:frontend3.0
+      - name: Get Terraform Outputs
+        id: tfout
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
+          echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
+          echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
 
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig --region $REGION --name ${{ env.eks_cluster_name }}
+      - name: Tag Subnets for Load Balancer
+        run: |
+          aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
+          aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
 
-    - name: Deploy to Kubernetes
-      run: |
-        kubectl apply -f $APP_DIR/k8s/backend-deployment.yaml
-        kubectl apply -f $APP_DIR/k8s/frontend-deployment.yaml
-        kubectl apply -f $APP_DIR/k8s/ingress.yaml
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+
+      - name: Install eksctl, kubectl, and helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client
+          curl --silent --location "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+          eksctl version
+
+      - name: Check Docker Version
+        run: docker --version
+
+      - name: Authenticate Docker to ECR
+        run: |
+          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+      - name: Associate IAM OIDC
+        run: |
+          eksctl utils associate-iam-oidc-provider --region $REGION --cluster $CLUSTER_NAME --approve || true
+
+      - name: Create IAM Policy for LB Controller
+        run: |
+          curl -o iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+          aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam-policy.json || true
+
+      - name: Create IAM Service Account for LB Controller
+        run: |
+          eksctl create iamserviceaccount \
+            --cluster $CLUSTER_NAME \
+            --namespace kube-system \
+            --name aws-load-balancer-controller \
+            --attach-policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
+            --approve --override-existing-serviceaccounts || true
+
+      - name: Install Helm Chart for LB Controller
+        run: |
+          helm repo add eks https://aws.github.io/eks-charts
+          helm repo update
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            -n kube-system \
+            --set clusterName=$CLUSTER_NAME \
+            --set serviceAccount.create=false \
+            --set serviceAccount.name=aws-load-balancer-controller \
+            --set region=$REGION \
+            --set vpcId=$VPC_ID || true
+
+      ### 3. Build and Push Docker Images with Build Number Tag
+      - name: Build and Push Backend Image
+        working-directory: ${{ env.APP_DIR }}/backend
+        run: |
+          docker build -t backend:${BUILD_NUMBER} .
+          docker tag backend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
+          
+          echo "BACKEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}" >> $GITHUB_ENV
+
+
+
+
+      - name: Build and Push Frontend Image
+        working-directory: ${{ env.APP_DIR }}/frontend
+        run: |
+          REACT_APP_BACKEND_URL=/api npm install
+          REACT_APP_BACKEND_URL=/api npm run build
+          docker build -t frontend:${BUILD_NUMBER} .
+          docker tag frontend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
+          docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
+          
+          echo "FRONTEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}" >> $GITHUB_ENV
+
+
+      - name: Replace image lines in deployment files
+        run: |
+          echo "Updating backend and frontend images"
+          sed -i "s|image: backend_placeholder|image: ${{ env.BACKEND_IMAGE }}|" $APP_DIR/k8s/backend-deployment.yaml
+          sed -i "s|image: frontend_placeholder|image: ${{ env.FRONTEND_IMAGE }}|" $APP_DIR/k8s/frontend-deployment.yaml
+      
+          echo "After update:"
+          grep 'image:' $APP_DIR/k8s/backend-deployment.yaml
+          grep 'image:' $APP_DIR/k8s/frontend-deployment.yaml
+
+
+
+
+      ### 4. Deploy to Kubernetes
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f $APP_DIR/k8s/backend-deployment.yaml
+          kubectl apply -f $APP_DIR/k8s/frontend-deployment.yaml
+          kubectl apply -f $APP_DIR/k8s/ingress.yaml
+
+
+      - name: Get Ingress DNS (with wait)
+        run: |
+          echo "Waiting for Ingress DNS..."
+          for i in {1..15}; do
+            DNS=$(kubectl get ingress portfolio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ ! -z "$DNS" ]; then
+              echo "Ingress DNS: $DNS"
+              echo "RAW_DNS=$DNS" >> $GITHUB_ENV
+              break
+            fi
+            echo "Still waiting for Ingress... ($i)"
+            sleep 10
+          done

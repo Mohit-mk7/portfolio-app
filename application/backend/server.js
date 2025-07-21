@@ -9,7 +9,7 @@ let users = [
   {
     name: 'Mohit',
     role: 'DevOps Engineer',
-    email: 'mohit@ac.com',
+    email: 'ghost@ac.com',
     description: 'Specializes in Monitoring and infrastructure automation'
   },
   {
