@@ -37,15 +37,11 @@ jobs:
         working-directory: bucket
         run: terraform init -input=false
 
+
       - name: Terraform Apply - Bucket Infra
         working-directory: bucket
-        run: |
-          BUCKET_NAME="mohitbucket234567erty"
-          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "Bucket $BUCKET_NAME already exists. Skipping bucket terraform apply."
-          else
-            terraform apply -auto-approve
-          fi
+        run: terraform apply -auto-approve
+
 
       ### 2. EKS Infra Setup
       - name: Terraform Init - EKS Infra
