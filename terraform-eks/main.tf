@@ -12,12 +12,16 @@ module "ecr" {
 
 
 module "eks" {
-  source          = "./modules/eks"
-  region          = var.region
-  cluster_name    = var.cluster_name
-  private_subnet_ids = [
+  source              = "./modules/eks"
+  region              = var.region
+  cluster_name        = var.cluster_name
+  private_subnet_ids  = [
     module.vpc.private_subnet_id,
     module.vpc.private_subnet_b_id
   ]
-  vpc_id          = module.vpc.vpc_id
+  public_subnet_ids   = [
+    module.vpc.public_subnet_id,
+    module.vpc.public_subnet_b_id
+  ]
+  vpc_id              = module.vpc.vpc_id
 }
