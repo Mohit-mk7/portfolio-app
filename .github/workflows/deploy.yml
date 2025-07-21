@@ -12,7 +12,6 @@ env:
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
   REPO_NAME: ${{ secrets.ECR_REPO_NAME }}
-  VPC_ID: ${{ secrets.VPC_ID }}
   BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
@@ -32,25 +31,33 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      ### 1. Bucket Infra Setup (S3 backend)
-      - name: Terraform Init - Bucket Infra
+      ### 1. Bucket Infra Setup
+      - name: Terraform Init - Bucket
         working-directory: bucket
         run: terraform init -input=false
 
-
-      - name: Terraform Apply - Bucket Infra
+      - name: Terraform Apply - Bucket
         working-directory: bucket
+        env:
+          TF_VAR_bucket_name: ${{ secrets.TF_BUCKET_NAME }}
+          TF_VAR_region: ${{ env.REGION }}
         run: terraform apply -auto-approve
-
 
       ### 2. EKS Infra Setup
-      - name: Terraform Init - EKS Infra
+      - name: Terraform Init - EKS
         working-directory: ${{ env.TF_DIR }}
-        run: terraform init -input=false -reconfigure
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_BUCKET_NAME }}" \
+            -backend-config="key=portfolio-app/terraform.tfstate" \
+            -backend-config="region=${{ env.REGION }}"
 
-      - name: Terraform Apply - EKS Infra
+      - name: Terraform Apply - EKS
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -auto-approve
+
+      ### 3. Your app logic continues here...
+      # (you already have steps for tagging subnets, installing Helm, building images, etc.)
 
       - name: Get Terraform Outputs
         id: tfout
