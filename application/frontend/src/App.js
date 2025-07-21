@@ -66,7 +66,7 @@ function App() {
       </div>
 
       {/* Title */}
-      <h1 className="text-center mb-4 fw-bold display-5">🚀 Portfolio Users</h1>
+      <h1 className="text-center mb-4 fw-bold display-5">🚀 Portfolio Users App</h1>
 
       {/* Search bar */}
       <Form.Control
