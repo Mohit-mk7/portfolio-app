@@ -68,6 +68,11 @@ jobs:
 
       - name: Terraform Apply - EKS
         working-directory: ${{ env.TF_DIR }}
+        env:
+          TF_VAR_region: ${{ env.REGION }}
+          TF_VAR_cluster_name: ${{ env.CLUSTER_NAME }}
+          TF_VAR_ecr_name: ${{ env.REPO_NAME }}
+          TF_VAR_jump_ssh_cidr: "0.0.0.0/0"
         run: terraform apply -auto-approve
 
       ### 3. Your app logic continues here...
