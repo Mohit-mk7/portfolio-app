@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: backend_placeholder
+          image: frontend_placeholder
           ports:
             - containerPort: 80
           env:
