@@ -61,13 +61,6 @@ jobs:
             -backend-config="key=portfolio-app/terraform.tfstate" \
             -backend-config="region=${{ env.REGION }}"
 
-      - name: Get Terraform Outputs
-        id: tfout
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
-          echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
-          echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
 
       - name: Terraform Apply - EKS
         working-directory: ${{ env.TF_DIR }}
@@ -78,6 +71,17 @@ jobs:
           TF_VAR_jump_ssh_cidr: "0.0.0.0/0"
           TF_VAR_public_subnet_ids: ${{ env.subnet1 }},${{ env.subnet2 }}
         run: terraform apply -auto-approve
+
+
+      - name: Get Terraform Outputs
+        id: tfout
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
+          echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
+          echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
+
+
 
       - name: Tag Subnets for Load Balancer
         run: |
