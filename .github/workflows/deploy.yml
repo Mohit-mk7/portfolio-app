@@ -31,8 +31,6 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-
-      ### 1. Bucket Infra Setup (Only if not exists)
       - name: Check if S3 Bucket Exists
         id: check_bucket
         run: |
@@ -41,12 +39,12 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
       - name: Terraform Init - Bucket
         if: steps.check_bucket.outputs.exists == 'false'
         working-directory: bucket
         run: terraform init -input=false
-      
+
       - name: Terraform Apply - Bucket
         if: steps.check_bucket.outputs.exists == 'false'
         working-directory: bucket
@@ -55,9 +53,6 @@ jobs:
           TF_VAR_region: ${{ env.REGION }}
         run: terraform apply -auto-approve
 
-
-
-      ### 2. EKS Infra Setup
       - name: Terraform Init - EKS
         working-directory: ${{ env.TF_DIR }}
         run: |
@@ -65,18 +60,6 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_BUCKET_NAME }}" \
             -backend-config="key=portfolio-app/terraform.tfstate" \
             -backend-config="region=${{ env.REGION }}"
-
-      - name: Terraform Apply - EKS
-        working-directory: ${{ env.TF_DIR }}
-        env:
-          TF_VAR_region: ${{ env.REGION }}
-          TF_VAR_cluster_name: ${{ env.CLUSTER_NAME }}
-          TF_VAR_ecr_name: ${{ env.REPO_NAME }}
-          TF_VAR_jump_ssh_cidr: "0.0.0.0/0"
-        run: terraform apply -auto-approve
-
-      ### 3. Your app logic continues here...
-      # (you already have steps for tagging subnets, installing Helm, building images, etc.)
 
       - name: Get Terraform Outputs
         id: tfout
@@ -86,36 +69,45 @@ jobs:
           echo "subnet1=$(terraform output -json public_subnet_ids | jq -r '.[0]')" >> $GITHUB_ENV
           echo "subnet2=$(terraform output -json public_subnet_ids | jq -r '.[1]')" >> $GITHUB_ENV
 
+      - name: Terraform Apply - EKS
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          TF_VAR_region: ${{ env.REGION }}
+          TF_VAR_cluster_name: ${{ env.CLUSTER_NAME }}
+          TF_VAR_ecr_name: ${{ env.REPO_NAME }}
+          TF_VAR_jump_ssh_cidr: "0.0.0.0/0"
+          TF_VAR_public_subnet_ids: ${{ env.subnet1 }},${{ env.subnet2 }}
+        run: terraform apply -auto-approve
+
       - name: Tag Subnets for Load Balancer
         run: |
           aws ec2 create-tags --resources ${{ env.subnet1 }} --tags Key=kubernetes.io/role/elb,Value=1
           aws ec2 create-tags --resources ${{ env.subnet2 }} --tags Key=kubernetes.io/role/elb,Value=1
 
       - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+        run: aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
 
       - name: Install eksctl, kubectl, and helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client
           curl --silent --location "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
           sudo mv /tmp/eksctl /usr/local/bin
-          eksctl version
 
       - name: Create monitoring namespace
         run: kubectl create namespace monitoring || true
 
-      - name: Install Prometheus
+      - name: Install Prometheus with LoadBalancer
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
           helm upgrade --install prometheus prometheus-community/prometheus \
-            --namespace monitoring
+            --namespace monitoring \
+            --set server.persistentVolume.enabled=true \
+            --set server.service.type=LoadBalancer
 
-      - name: Install Grafana
+      - name: Install Grafana with LoadBalancer
         run: |
           helm repo add grafana https://grafana.github.io/helm-charts
           helm repo update
@@ -124,25 +116,20 @@ jobs:
             --set adminPassword='admin123' \
             --set service.type=LoadBalancer
 
-      - name: Get Grafana Access Info
+      - name: Wait for Prometheus & Grafana URLs
         run: |
-          echo "Waiting for Grafana LoadBalancer..."
-          for i in {{1..15}}; do
-            GRAFANA_LB=$(kubectl get svc grafana -n monitoring -o jsonpath='{{.status.loadBalancer.ingress[0].hostname}}' 2>/dev/null || true)
-            if [ ! -z "$GRAFANA_LB" ]; then
-              echo "Grafana URL: http://$GRAFANA_LB"
-              echo "GRAFANA_URL=http://$GRAFANA_LB" >> $GITHUB_ENV
-              break
-            fi
-            echo "Waiting... ($i)"
-            sleep 10
+          for svc in grafana prometheus-server; do
+            echo "Waiting for $svc..."
+            for i in {1..20}; do
+              LB=$(kubectl get svc $svc -n monitoring -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+              if [ ! -z "$LB" ]; then
+                echo "$svc URL: http://$LB"
+                break
+              fi
+              echo "Still waiting for $svc... ($i)"
+              sleep 10
+            done
           done
-          echo "Grafana Admin: admin"
-          echo "Grafana Password: admin123"
-
-
-      - name: Check Docker Version
-        run: docker --version
 
       - name: Authenticate Docker to ECR
         run: |
@@ -176,20 +163,15 @@ jobs:
             --set serviceAccount.create=false \
             --set serviceAccount.name=aws-load-balancer-controller \
             --set region=$REGION \
-            --set vpcId=$VPC_ID || true
+            --set vpcId=$vpc_id || true
 
-      ### 3. Build and Push Docker Images with Build Number Tag
       - name: Build and Push Backend Image
         working-directory: ${{ env.APP_DIR }}/backend
         run: |
           docker build -t backend:${BUILD_NUMBER} .
           docker tag backend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
           docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}
-          
           echo "BACKEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:backend${BUILD_NUMBER}" >> $GITHUB_ENV
-
-
-
 
       - name: Build and Push Frontend Image
         working-directory: ${{ env.APP_DIR }}/frontend
@@ -199,34 +181,21 @@ jobs:
           docker build -t frontend:${BUILD_NUMBER} .
           docker tag frontend:${BUILD_NUMBER} $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
           docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}
-          
           echo "FRONTEND_IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/${REPO_NAME}:frontend${BUILD_NUMBER}" >> $GITHUB_ENV
-
 
       - name: Replace image lines in deployment files
         run: |
-          echo "Updating backend and frontend images"
           sed -i "s|image: backend_placeholder|image: ${{ env.BACKEND_IMAGE }}|" $APP_DIR/k8s/backend-deployment.yaml
           sed -i "s|image: frontend_placeholder|image: ${{ env.FRONTEND_IMAGE }}|" $APP_DIR/k8s/frontend-deployment.yaml
-      
-          echo "After update:"
-          grep 'image:' $APP_DIR/k8s/backend-deployment.yaml
-          grep 'image:' $APP_DIR/k8s/frontend-deployment.yaml
 
-
-
-
-      ### 4. Deploy to Kubernetes
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -f $APP_DIR/k8s/backend-deployment.yaml
           kubectl apply -f $APP_DIR/k8s/frontend-deployment.yaml
           kubectl apply -f $APP_DIR/k8s/ingress.yaml
 
-
       - name: Get Ingress DNS (with wait)
         run: |
-          echo "Waiting for Ingress DNS..."
           for i in {1..15}; do
             DNS=$(kubectl get ingress portfolio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             if [ ! -z "$DNS" ]; then
